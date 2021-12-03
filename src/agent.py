@@ -22,7 +22,7 @@ class Agent():
         self.mode = mode
 
         self.action_size = action_size
-        self.loss = nn.MSELoss()
+        self.loss = nn.SmoothL1Loss()
 
         # These are hyper parameters for the DQN
         self.discount_factor = 0.99
