@@ -105,15 +105,18 @@ class PPO_MHDPA_160(nn.Module):
             nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1),
             nn.MaxPool2d(2)
         )
-        #self.bn2 = nn.BatchNorm2d(64)
-        self.conv3 = nn.Sequential(
-            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
-            nn.MaxPool2d(2)
-        )
-        self.attentionBlock1 = MultiHeadedSelfAttention(64, 64, 4)
+
+        self.layer_norm1 = nn.GroupNorm(1, 32)
+        self.attentionBlock1 = MultiHeadedSelfAttention(32, 32, 2)
+        self.layer_norm2 = nn.GroupNorm(1, 32)
+        self.attentionBlock2 = MultiHeadedSelfAttention(32, 32, 2)
+        self.layer_norm3 = nn.GroupNorm(1, 32)
+        self.attentionBlock3 = MultiHeadedSelfAttention(32, 32, 2)
+
+        self.pool = nn.MaxPool2d(2)
 
         #self.bn3 = nn.BatchNorm2d(64)
-        self.fc = nn.Linear(6400, 512)
+        self.fc = nn.Linear(3200, 512)
         self.head = nn.Linear(512, action_size+1)
 
         width = 160
@@ -127,8 +130,13 @@ class PPO_MHDPA_160(nn.Module):
         x = torch.cat([local_coords, x], dim=1)
         x = F.leaky_relu(self.conv1(x))
         x = F.leaky_relu(self.conv2(x))
-        x = F.leaky_relu(self.conv3(x))
+        x = self.layer_norm1(x)
         x = self.attentionBlock1(x)
+        x = self.layer_norm2(x)
+        x = self.attentionBlock2(x)
+        x = self.layer_norm3(x)
+        x = self.attentionBlock3(x)
+        x = self.pool(x)
         x = x.view(x.size(0), -1)
         x = F.leaky_relu(self.fc(x))
         x = self.head(x)
@@ -143,8 +151,15 @@ class PPO_MHDPA_160(nn.Module):
         x = torch.cat([local_coords, x], dim=1)
         x = F.leaky_relu(self.conv1(x))
         x = F.leaky_relu(self.conv2(x))
-        x = F.leaky_relu(self.conv3(x))
-        x, attention_maps = self.attentionBlock1(x, return_attention=True)
+        x = self.layer_norm1(x)
+        x, attention_maps_1 = self.attentionBlock1(x, return_attention=True)
+        x = self.layer_norm2(x)
+        x, attention_maps_2 = self.attentionBlock2(x, return_attention=True)
+        x = self.layer_norm3(x)
+        x, attention_maps_3 = self.attentionBlock3(x, return_attention=True)
+        x = self.pool(x)
+
+        attention_maps = [attention_maps_1, attention_maps_2, attention_maps_3]
 
         return attention_maps
 
@@ -404,12 +419,13 @@ class MultiHeadedAttention(nn.Module):
 
         self.qkv_proj = nn.Conv2d(in_channels=in_dim,
                                   out_channels=3*embed_dim,
-                                  kernel_size=1)
+                                  kernel_size=1,
+                                  bias=False)
         self.o_proj = nn.Conv2d(in_channels=in_dim,
                                 out_channels=output_dim,
                                 kernel_size=1)
 
-        self.softmax  = nn.Softmax(dim=-1) #
+        self.softmax = nn.Softmax(dim=-1) #
 
 
     def forward(self, x, return_attention=False):
@@ -466,7 +482,7 @@ class MultiHeadedAttention(nn.Module):
         # proj query : torch.Tensor of shape (N, H*W, Ck)
         proj_query  = q.view(N,-1,W*H).permute(0,2,1)
         proj_key = k.view(N,-1,W*H)
-        energy =  torch.bmm(proj_query,proj_key)
+        energy =  torch.bmm(proj_query,proj_key) / (Ck ** 0.5)
         attention = self.softmax(energy)
         proj_value = v.view(N,-1,W*H)
 

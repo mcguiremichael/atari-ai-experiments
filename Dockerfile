@@ -47,7 +47,8 @@ RUN pip3 install numpy \
                  pandas \
                  notebook \
                  scikit-image \
-                 atari_py
+                 atari_py \
+                 opencv-python
 
 RUN wget http://www.atarimania.com/roms/Roms.rar
 RUN mkdir extracted_roms && mv Roms.rar extracted_roms && cd extracted_roms && unrar e -y Roms.rar
