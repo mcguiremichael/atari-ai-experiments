@@ -138,6 +138,17 @@ class PPO_MHDPA_160(nn.Module):
 
         return probs, val
 
+    def forward_attention(self, x):
+        local_coords = self.coords.expand((len(x), 2) + (x.shape[2:]))
+        x = torch.cat([local_coords, x], dim=1)
+        x = F.leaky_relu(self.conv1(x))
+        x = F.leaky_relu(self.conv2(x))
+        x = F.leaky_relu(self.conv3(x))
+        x, attention_maps = self.attentionBlock1(x, return_attention=True)
+
+        return attention_maps
+
+
 class PPO_LSTM(nn.Module):
     def __init__(self, action_size, hidden_size=64, depth=1):
         super(PPO_LSTM, self).__init__()
@@ -429,18 +440,39 @@ class MultiHeadedAttention(nn.Module):
             return o
 
     def scaled_dot_product(self, q, k, v):
+        """Short summary.
 
-        b, depth, H, W = q.shape
-        value_depth = v.shape[1]
+        Parameters
+        ----------
+        q : torch.Tensor
+            Feature image of shape (N, Ck, H, W)
+        k : torch.Tensor
+            Feature image of shape (N, Ck, H, W)
+        v : torch.Tensor
+            Feature image of shape (N, Cv, H, W)
 
-        proj_query  = q.view(b,-1,W*H).permute(0,2,1) # B X CX(N)
-        proj_key = k.view(b,-1,W*H) # B X C x (*W*H)
-        energy =  torch.bmm(proj_query,proj_key) # transpose check
-        attention = self.softmax(energy) # BX (N) X (N)
-        proj_value = v.view(b,-1,W*H) # B X C X N
+        Returns
+        -------
+        out : torch.Tensor
+            Feature image of shape (N, Cv, H, W)
+        attention : torch.Tensor
+            Attention matrix of shape (N, H*W, H*W)
 
-        out = torch.bmm(proj_value,attention.permute(0,2,1) )
-        out = out.view(b,value_depth,H,W)
+        """
+
+        N, Ck, H, W = q.shape
+        Cv = v.shape[1]
+
+        # proj query : torch.Tensor of shape (N, H*W, Ck)
+        proj_query  = q.view(N,-1,W*H).permute(0,2,1)
+        proj_key = k.view(N,-1,W*H)
+        energy =  torch.bmm(proj_query,proj_key)
+        attention = self.softmax(energy)
+        proj_value = v.view(N,-1,W*H)
+
+        out = torch.bmm(proj_value,attention.permute(0,2,1))
+        out = out.view(N,Cv,H,W)
+        attention = attention.reshape((N, H, W, H, W))
 
         return out, attention
 
