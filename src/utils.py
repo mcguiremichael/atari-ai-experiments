@@ -8,7 +8,7 @@ import random
 def find_max_lifes(env):
     env.reset()
     _, _, _, info = env.step(0)
-    return info['ale.lives']
+    return info['lives']
 
 def check_live(life, cur_life):
     if life > cur_life:
@@ -23,13 +23,13 @@ def get_frame(X):
 def get_init_state(history, s):
     for i in range(HISTORY_SIZE):
         history[i, :, :] = get_frame(s)
-        
+
 def get_score_range(name):
     env = gym.make(name)
     n = env.action_space.n
     max_score = -np.inf
     min_score = np.inf
-    for i in range(100):
+    for i in range(1):
         done = False
         env.reset()
         while not done:
@@ -40,5 +40,3 @@ def get_score_range(name):
             if (reward < min_score):
                 min_score = reward
     return [min_score, max_score]
-
-        

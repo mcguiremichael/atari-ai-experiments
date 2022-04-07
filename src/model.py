@@ -60,10 +60,10 @@ class PPO_MHDPA(nn.Module):
         self.conv2 = nn.Conv2d(16, 32, kernel_size=4, stride=2, padding=2)
         #self.bn2 = nn.BatchNorm2d(64)
         self.attentionBlock1 = nn.Sequential(
-            RelationalModule(
+            SelfAttention(
                 32, 8, 4
             ),
-            RelationalModule(
+            SelfAttention(
                 32, 16, 4
             )
         )
@@ -110,14 +110,7 @@ class PPO_MHDPA_160(nn.Module):
             nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
             nn.MaxPool2d(2)
         )
-        self.attentionBlock1 = nn.Sequential(
-            RelationalModule(
-                64, 32, 2
-            ),
-            RelationalModule(
-                64, 32, 2
-            )
-        )
+        self.attentionBlock1 = MultiHeadedSelfAttention(64, 64, 4)
 
         #self.bn3 = nn.BatchNorm2d(64)
         self.fc = nn.Linear(6400, 512)
@@ -331,75 +324,6 @@ class ConvLSTM_res(nn.Module):
         else:
             return np.zeros((batch_size, 2, self.hidden_size, width, width)).astype(np.float32)
 
-
-class RelationalProjection(nn.Module):
-    def __init__(self, in_size, num_features, device="cuda:0"):
-
-        super(RelationalProjection, self).__init__()
-        self.linear = nn.Linear(in_size, num_features)
-        self.norm = nn.InstanceNorm1d(num_features)
-        self.function = nn.ReLU()
-
-        self.gamma = Variable(torch.ones((1,1,num_features)).float()).to(device)
-        self.beta = Variable(torch.zeros((1,1,num_features)).float()).to(device)
-
-    def forward(self, x):
-        x = self.linear(x)
-        x = self.gamma * self.norm(x) + self.beta
-        return self.function(x)
-
-class SelfAttentionBlock(nn.Module):
-    def __init__(self, in_size, num_features, num_heads, device="cuda:0"):
-
-        super(SelfAttentionBlock, self).__init__()
-        self.device = device
-        self.in_size = in_size
-        self.num_features = num_features
-        self.num_heads = num_heads
-        self.QueryLayers = []
-        self.KeyLayers = []
-        self.ValueLayers = []
-
-        for i in range(in_size):
-            self.QueryLayers.append(RelationalProjection(in_size, num_features).to(self.device))
-            self.KeyLayers.append(RelationalProjection(in_size, num_features).to(self.device))
-            self.ValueLayers.append(RelationalProjection(in_size, num_features).to(self.device))
-        self.MLP = nn.Sequential(
-            nn.Linear(self.num_heads * self.num_features, self.num_heads * self.num_features),
-            nn.ReLU(),
-            nn.Linear(self.num_heads * self.num_features, self.num_heads * self.num_features),
-            nn.ReLU()
-        ).to(self.device)
-
-        self.output_norm = nn.InstanceNorm1d(num_features)
-        self.gamma = Variable(torch.ones((1,1,num_features*num_heads)).float()).to(device)
-        self.beta = Variable(torch.zeros((1,1,num_features*num_heads)).float()).to(device)
-
-
-    def forward(self, x):
-        (N, D, H, W) = x.shape
-        new_x = x.permute(0, 2, 3, 1)
-        flattened = new_x.flatten(start_dim=1, end_dim=-2)
-
-        heads_out = []
-
-        for i in range(self.num_heads):
-            Q = self.QueryLayers[i](flattened)
-            K = self.KeyLayers[i](flattened)
-            V = self.ValueLayers[i](flattened)
-            numerator = torch.matmul(Q, K.permute(0,2,1))
-            scaled = numerator / math.sqrt(self.num_features)
-            attention_weights = F.softmax(scaled)
-            A = torch.matmul(attention_weights, V)
-            heads_out.append(A)
-
-        heads_out = torch.cat(heads_out, dim=-1)
-        output = self.output_norm(self.MLP(heads_out) + heads_out)
-        output = self.gamma * output + self.beta
-        output = output.permute(0,2,1).contiguous().view((N, -1, H, W))
-
-        return output
-
 class RelationalModule(nn.Module):
 
     def __init__(self, in_size, num_features, num_heads, encode=True):
@@ -420,6 +344,121 @@ class RelationalModule(nn.Module):
         output = self.mhdpa(new_x)
         output = output.permute(0,2,1).contiguous().view((N, -1, H, W))
         return output
+
+
+class SelfAttention(nn.Module):
+    """ Self attention Layer"""
+    def __init__(self,in_dim, value_dim, query_dim, key_dim):
+        super(SelfAttention,self).__init__()
+        self.chanel_in = in_dim
+
+        self.query_conv = nn.Conv2d(in_channels = in_dim , out_channels = query_dim , kernel_size= 1)
+        self.key_conv = nn.Conv2d(in_channels = in_dim , out_channels = key_dim , kernel_size= 1)
+        self.value_conv = nn.Conv2d(in_channels = in_dim , out_channels = value_dim , kernel_size= 1)
+        self.gamma = nn.Parameter(torch.zeros(1))
+
+        self.softmax  = nn.Softmax(dim=-1) #
+
+    def forward(self,x):
+        """
+            inputs :
+                x : input feature maps( B X C X W X H)
+            returns :
+                out : self attention value + input feature
+                attention: B X N X N (N is Width*Height)
+        """
+        m_batchsize,C,width ,height = x.size()
+        proj_query  = self.query_conv(x).view(m_batchsize,-1,width*height).permute(0,2,1) # B X CX(N)
+        proj_key =  self.key_conv(x).view(m_batchsize,-1,width*height) # B X C x (*W*H)
+        energy =  torch.bmm(proj_query,proj_key) # transpose check
+        attention = self.softmax(energy) # BX (N) X (N)
+        proj_value = self.value_conv(x).view(m_batchsize,-1,width*height) # B X C X N
+
+        out = torch.bmm(proj_value,attention.permute(0,2,1) )
+        out = out.view(m_batchsize,C,width,height)
+
+        out = self.gamma*out + x
+        return out #,attention
+
+class MultiHeadedAttention(nn.Module):
+    """Multi-Headed attention layer"""
+    def __init__(self, in_dim, embed_dim, output_dim, num_heads):
+        super(MultiHeadedAttention, self).__init__()
+
+        self.in_dim = in_dim
+        self.embed_dim = embed_dim
+        self.output_dim = output_dim
+        self.num_heads = num_heads
+        self.head_dim = embed_dim // num_heads
+
+        self.qkv_proj = nn.Conv2d(in_channels=in_dim,
+                                  out_channels=3*embed_dim,
+                                  kernel_size=1)
+        self.o_proj = nn.Conv2d(in_channels=in_dim,
+                                out_channels=output_dim,
+                                kernel_size=1)
+
+        self.softmax  = nn.Softmax(dim=-1) #
+
+
+    def forward(self, x, return_attention=False):
+
+        batch_size, in_dim, H, W = x.size()
+        qkv = self.qkv_proj(x)
+        # qkv is of shape (batch_size, embed_dim, H, W)
+
+        # Separate Q, K, V from linear output
+        qkv = qkv.reshape(batch_size, self.num_heads, 3*self.head_dim, H, W)
+        values = []
+        attentions = []
+
+        for i in range(self.num_heads):
+            q, k, v = qkv[:,i].chunk(3, dim=1)
+            curr_head_values, attention = self.scaled_dot_product(q, k, v)
+            values.append(curr_head_values)
+            attentions.append(attention)
+
+        values = torch.cat(values, axis=1)
+        attentions = torch.cat(attentions, axis=1)
+
+        o = self.o_proj(values)
+
+        if return_attention:
+            return o, attentions
+        else:
+            return o
+
+    def scaled_dot_product(self, q, k, v):
+
+        b, depth, H, W = q.shape
+        value_depth = v.shape[1]
+
+        proj_query  = q.view(b,-1,W*H).permute(0,2,1) # B X CX(N)
+        proj_key = k.view(b,-1,W*H) # B X C x (*W*H)
+        energy =  torch.bmm(proj_query,proj_key) # transpose check
+        attention = self.softmax(energy) # BX (N) X (N)
+        proj_value = v.view(b,-1,W*H) # B X C X N
+
+        out = torch.bmm(proj_value,attention.permute(0,2,1) )
+        out = out.view(b,value_depth,H,W)
+
+        return out, attention
+
+class MultiHeadedSelfAttention(nn.Module):
+    def __init__(self, in_dim, embed_dim, num_heads):
+        super(MultiHeadedSelfAttention, self).__init__()
+
+        self.mhdpa = MultiHeadedAttention(in_dim, embed_dim, in_dim, num_heads)
+        self.gamma = nn.Parameter(torch.zeros(1))
+
+    def forward(self, x, return_attention=False):
+
+        out, attention = self.mhdpa(x, return_attention=True)
+        out = self.gamma * out + x
+        if return_attention:
+            return out, attention
+        else:
+            return out
 
 
 class ResnetBlock(nn.Module):

@@ -100,7 +100,7 @@ def train_agent():
                     frame_next_state = get_frame(next_states[i])
                     env.history[HISTORY_SIZE,:,:] = frame_next_state
                     terminal_state = env.done #check_live(env.life, env.info['ale.lives'])
-                    env.life = env.info['ale.lives']
+                    env.life = env.info['lives']
                     r = env.reward #(env.reward / high) * 20.0 #np.log(max(env.reward+1, 1))#((env.reward - low) / (high - low)) * 30
                     agent.memory.push(i, deepcopy(curr_states[i]), actions[i], r, terminal_state, values[i], 0, 0)
 

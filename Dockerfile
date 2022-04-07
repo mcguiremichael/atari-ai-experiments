@@ -23,9 +23,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python-opengl \
         tmux \
         wget \
+        unar \
         unrar \
-        unzip 
-        
+        unzip
+
 RUN apt-get update \
   && apt-get install -y -qq --no-install-recommends \
     libglvnd0 \
@@ -39,6 +40,7 @@ RUN pip3 install --upgrade pip
 
 RUN pip3 install numpy \
                  gym \
+                 pyglet \
                  box2d-py \
                  matplotlib \
                  seaborn \
@@ -47,7 +49,12 @@ RUN pip3 install numpy \
                  scikit-image \
                  atari_py
 
-RUN wget http://www.atarimania.com/roms/Roms.rar &&  unrar e Roms.rar && unzip ROMS.zip && python3 -m atari_py.import_roms ROMS
+RUN wget http://www.atarimania.com/roms/Roms.rar
+RUN mkdir extracted_roms && mv Roms.rar extracted_roms && cd extracted_roms && unrar e -y Roms.rar
+RUN python3 -m atari_py.import_roms extracted_roms
+RUN pip install gym[atari,accept-rom-license]==0.21.0
+
+RUN apt-get install -y vim
 
 ENV NVIDIA_VISIBLE_DEVICES all
 ENV NVIDIA_DRIVER_CAPABILITIES graphics,utility,compute
