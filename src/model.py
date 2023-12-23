@@ -114,9 +114,6 @@ class PPO_MHDPA_160(nn.Module):
             RelationalModule(
                 64, 32, 2
             ),
-            RelationalModule(
-                64, 32, 2
-            )
         )
 
         #self.bn3 = nn.BatchNorm2d(64)
@@ -144,6 +141,105 @@ class PPO_MHDPA_160(nn.Module):
         val = x[:,-1]
 
         return probs, val
+
+class PPO_MHDPA_160_ACTION_2D(nn.Module):
+    def __init__(self, action_shape, depth, device="cuda:0"):
+        super(PPO_MHDPA_160_ACTION_2D, self).__init__()
+        self.action_shape = action_shape
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(depth+2, 32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
+        )
+
+        self.conv2 = nn.Sequential(
+            ResnetBlock(256, 2),
+            ResnetBlock(256, 2),
+            ResnetBlock(256, 2),
+            ResnetBlock(256, 2),
+            ResnetBlock(256, 2),
+            ResnetBlock(256, 2),
+            ResnetBlock(256, 2),
+            ResnetBlock(256, 2),
+            ResnetBlock(256, 2),
+            ResnetBlock(256, 2)
+        )
+
+        """
+        #self.bn1 = nn.BatchNorm2d(32)
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1),
+            nn.MaxPool2d(2)
+        )
+        #self.bn2 = nn.BatchNorm2d(64)
+        self.conv3 = nn.Sequential(
+            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
+            nn.MaxPool2d(2)
+        )
+
+        self.conv4 = nn.Sequential(
+            nn.Conv2d(64, 64, kernel_size=4, stride=1, padding=1)
+        )
+
+        self.attentionBlock1 = nn.Sequential(
+            RelationalModule(
+                64, 32, 2
+            ),
+        )
+        self.attentionBlock2 = nn.Sequential(
+            RelationalModule(
+                64, 32, 2
+            ),
+        )
+        """
+
+        self.value_head = nn.Sequential(
+            nn.Conv2d(256, 1, kernel_size=1, stride=1, padding=0),
+            nn.BatchNorm2d(1),
+            nn.ReLU(),
+            nn.Flatten(),
+            nn.Linear(225, 128),
+            nn.ReLU(),
+            nn.Linear(128, 1)
+        )
+        self.policy_head = nn.Sequential(
+            nn.Conv2d(256, 2, kernel_size=1, stride=1, padding=0),
+            nn.BatchNorm2d(2),
+            nn.ReLU(),
+            nn.Flatten(),
+            nn.Linear(450, 243),
+            nn.Softmax(dim=1)
+        )
+
+
+        width = 15
+        self.coords = torch.from_numpy(np.meshgrid(np.linspace(-1, 1, width), np.linspace(-1, 1, width))[0]).float().unsqueeze(0).unsqueeze(0)
+        self.coords = torch.cat([self.coords, self.coords.transpose(-2,-1)], dim=1).to(device)
+        self.coords.requires_grad = False
+
+
+    def forward(self, x):
+        local_coords = self.coords.expand((len(x), 2) + (x.shape[2:]))
+        x = torch.cat([local_coords, x], dim=1)
+        x = self.conv1(x)
+        x = self.conv2(x)
+        #x = F.leaky_relu(self.conv3(x))
+        #x = F.leaky_relu(self.conv4(x))
+        #x = self.attentionBlock1(x)
+        #x = self.attentionBlock2(x)
+        policy = self.policy_head(x)
+        value = self.value_head(x)
+
+        return policy, value
 
 class PPO_LSTM(nn.Module):
     def __init__(self, action_size, hidden_size=64, depth=1):
@@ -429,15 +525,28 @@ class ResnetBlock(nn.Module):
         self.activation = nn.ReLU
         self.residuals = nn.Sequential()
         for i in range(num_layers):
-            self.residuals.add_module(
-                "residual" + str(i+1),
-                nn.Sequential(
-                    nn.Conv2d(num_features, num_features, kernel_size=3, stride=1, padding=1),
-                    #nn.BatchNorm2d(num_features),
-                    self.activation()
+            if i == (num_layers - 1):
+                self.residuals.add_module(
+                    "residual" + str(i+1),
+                    nn.Sequential(
+                        nn.Conv2d(num_features, num_features, kernel_size=3, stride=1, padding=1),
+                        nn.BatchNorm2d(num_features),
+                    )
                 )
-            )
+            else:
+                self.residuals.add_module(
+                    "residual" + str(i+1),
+                    nn.Sequential(
+                        nn.Conv2d(num_features, num_features, kernel_size=3, stride=1, padding=1),
+                        nn.BatchNorm2d(num_features),
+                        self.activation()
+                    )
+                )
+
+        self.output_activation = self.activation()
 
     def forward(self, x):
         out = self.residuals(x)
-        return x + out
+        output = x + out
+        output = self.output_activation(output)
+        return output

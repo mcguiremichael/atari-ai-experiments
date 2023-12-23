@@ -5,6 +5,7 @@ import pylab
 import random
 import numpy as np
 import time
+import os
 from collections import deque
 from datetime import datetime
 from copy import deepcopy
@@ -19,6 +20,7 @@ from agent import *
 from model import *
 from config import *
 from env import GameEnv
+import gymnasium
 
 def train_agent():
     evaluation_reward = deque(maxlen=evaluation_reward_length)
@@ -29,15 +31,27 @@ def train_agent():
 
     ### Loop through all environments and run PPO on them
 
-    env_names = ['SpaceInvaders-v0', 'Boxing-v0', 'DoubleDunk-v0', 'IceHockey-v0', 'Breakout-v0', 'Phoenix-v0', 'Asteroids-v0', 'MsPacman-v0', 'Asterix-v0', 'Atlantis-v0', 'Alien-v0', 'Amidar-v0', 'Assault-v0', 'BankHeist-v0']
+    #env_names = ['SpaceInvaders-v0', 'Boxing-v0', 'DoubleDunk-v0', 'IceHockey-v0', 'Breakout-v0', 'Phoenix-v0', 'Asteroids-v0', 'MsPacman-v0', 'Asterix-v0', 'Atlantis-v0', 'Alien-v0', 'Amidar-v0', 'Assault-v0', 'BankHeist-v0']
     #env_names = ['SpaceInvaders-v4']
+    env_names = ["gym_woodoku/Woodoku-v0"]
+    gym_factory = gymnasium
+    #gym_factory = gym
     for a in range(len(env_names)):
         name = env_names[a]
         print("\n\n\n ------- STARTING TRAINING FOR %s ------- \n\n\n" % (name))
 
+        vis_env_idx = 0
         envs = []
         for i in range(num_envs):
-            envs.append(GameEnv(name))
+            if i == vis_env_idx:
+                render_mode="human"
+            else:
+                render_mode="rgb_array"
+            envs.append(GameEnv(name,
+                                render_mode=render_mode,
+                                gym_factory=gym_factory,
+                                height=15,
+                                width=15))
         #env.render()
 
 
@@ -49,24 +63,24 @@ def train_agent():
             action_size = envs[0].action_space.n
         rewards, episodes = [], []
 
-        vis_env_idx = 0
+        print("Determing min/max rewards of environment")
+        [low, high] = score_range = get_score_range(name, gym_factory=gymnasium)
+        print("Min: %d. Max: %d." % (low, high))
+
         vis_env = envs[vis_env_idx]
         e = 0
         frame = 0
         max_eval = -np.inf
         reset_count = 0
 
+        name = os.path.basename(name)
 
-        agent = Agent(action_size, mode='PPO_MHDPA')
-        torch.save(agent.policy_net.state_dict(), "./save_model/" + name + "_best")
+        agent = Agent(action_size, mode='PPO_MHDPA_2D')
+        torch.save(agent.policy_net.state_dict(), "./save_model/" + os.path.basename(name) + "_best")
         evaluation_reward = deque(maxlen=evaluation_reward_length)
         frame = 0
         memory_size = 0
         reset_max = 10
-
-        print("Determing min/max rewards of environment")
-        [low, high] = score_range = get_score_range(name)
-        print("Min: %d. Max: %d." % (low, high))
 
         while (frame < 20000000):
             step = 0
@@ -80,7 +94,11 @@ def train_agent():
                 net_in = np.stack([envs[i].history[:HISTORY_SIZE,:,:] for i in range(num_envs)])
                 step += num_envs
                 frame += num_envs
-                actions, values, _ = agent.get_action(np.float32(net_in) / 255.)
+
+                action_availabilities = [envs[i].get_available_actions() for i in range(num_envs)]
+
+                actions, values, _ = agent.get_action(np.float32(net_in) / 255.,
+                                                      action_availabilities=action_availabilities)
 
                 for i in range(num_envs):
                     env = envs[i]
@@ -100,13 +118,15 @@ def train_agent():
                     frame_next_state = get_frame(next_states[i])
                     env.history[HISTORY_SIZE,:,:] = frame_next_state
                     terminal_state = env.done #check_live(env.life, env.info['ale.lives'])
-                    env.life = env.info['ale.lives']
-                    r = env.reward #(env.reward / high) * 20.0 #np.log(max(env.reward+1, 1))#((env.reward - low) / (high - low)) * 30
+                    env.life = env.info['lives']
+                    r = (env.reward / high) #np.log(max(env.reward+1, 1))#((env.reward - low) / (high - low)) * 30
                     agent.memory.push(i, deepcopy(curr_states[i]), actions[i], r, terminal_state, values[i], 0, 0)
 
                     if (j == env_mem_size-1):
                         net_in = np.stack([envs[k].history[1:,:,:] for k in range(num_envs)])
-                        _, frame_next_vals, _ = agent.get_action(np.float32(net_in) / 255.)
+                        action_availabilities = [envs[i].get_available_actions() for i in range(num_envs)]
+                        _, frame_next_vals, _ = agent.get_action(np.float32(net_in) / 255.,
+                                                                 action_availabilities=action_availabilities)
 
                     env.score += env.reward
                     env.history[:HISTORY_SIZE, :, :] = env.history[1:,:,:]
@@ -140,10 +160,10 @@ def train_agent():
 
                         env.done = False
                         env.score = 0
-                        env.history = np.zeros([HISTORY_SIZE+1,HEIGHT,WIDTH], dtype=np.uint8)
+                        #env.history = np.zeros([HISTORY_SIZE+1,HEIGHT,WIDTH], dtype=np.uint8)
                         env.state = env.reset()
                         env.life = number_lives
-                        get_init_state(env.history, env.state)
+                        get_init_state(env.history, env.state, height=15, width=15)
 
             agent.train_policy_net(frame, frame_next_vals)
             agent.update_target_net()

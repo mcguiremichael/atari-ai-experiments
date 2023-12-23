@@ -14,28 +14,35 @@ from config import *
 import time
 import matplotlib.pyplot as plt
 from torch.nn.utils import clip_grad_norm_
+from torch.autograd import detect_anomaly
+
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class Agent():
-    def __init__(self, action_size, mode='PPO'):
+    def __init__(self,
+                 action_size,
+                 mode='PPO',
+                 c1=1.0,
+                 c2=0.01):
+        print(f"Using device {device}")
         self.load_model = False
         self.mode = mode
 
         self.action_size = action_size
-        self.loss = nn.SmoothL1Loss()
+        self.loss = nn.MSELoss()
 
         # These are hyper parameters for the DQN
         self.discount_factor = 0.99
         self.lam = 0.95
         self.epsilon = 1.0
         self.epsilon_min = 0.05
-        self.eps_denom = 1.0e-4
+        self.eps_denom = 1.0e-8
         self.explore_step = 1000000
         self.epsilon_decay = (self.epsilon - self.epsilon_min) / self.explore_step
         self.train_start = 100000
         self.update_target = 1000
-        self.c1 = 1.0      # Weight for value loss
-        self.c2 = 0.01      # Weight for entropy loss
+        self.c1 = c1      # Weight for value loss
+        self.c2 = c2      # Weight for entropy loss
         self.num_epochs = 3
         self.num_epochs_trained = 0
         self.num_frames_trained = 0
@@ -50,6 +57,9 @@ class Agent():
         elif (mode == 'PPO_MHDPA'):
             self.policy_net = PPO_MHDPA_160(action_size, HISTORY_SIZE)
             self.target_net = PPO_MHDPA_160(action_size, HISTORY_SIZE)
+        elif (mode == "PPO_MHDPA_2D"):
+            self.policy_net = PPO_MHDPA_160_ACTION_2D((3, 9, 9), HISTORY_SIZE)
+            self.target_net = PPO_MHDPA_160_ACTION_2D((3, 9, 9), HISTORY_SIZE)
         elif (mode == 'PPO_LSTM'):
             self.policy_net = PPO_LSTM(action_size, 64, 1)
             self.target_net = PPO_LSTM(action_size, 64, 1)
@@ -75,7 +85,10 @@ class Agent():
         self.target_net.load_state_dict(self.policy_net.state_dict())
 
     """Get action using policy net using action probabilities"""
-    def get_action(self, state, hidden_state=None):
+    def get_action(self,
+                   state,
+                   action_availabilities=None,
+                   hidden_state=None):
         if (len(state.shape)) == 3:
             state = torch.from_numpy(state).to(device).unsqueeze(0)
         else:
@@ -86,10 +99,19 @@ class Agent():
             probs, val = self.policy_net(state)
         probs = probs.detach().cpu().numpy()
         val = val.detach().cpu().numpy().flatten()
-        action = self.select_action(probs)
+        action = self.select_action(probs, action_availabilities)
         return action, val, hidden_state
 
-    def select_action(self, probs):
+    def select_action(self,
+                      probs,
+                      action_availabilities=None):
+
+        probs = probs.copy()
+        if action_availabilities is not None:
+            for i, avail in enumerate(action_availabilities):
+                probs[i] = probs[i] * avail
+                probs[i] = probs[i] / np.sum(probs[i])
+
         outs = []
         for j in range(len(probs)):
             candidate = random.random()
@@ -99,21 +121,25 @@ class Agent():
                 i += 1
                 total += probs[j,i]
             outs.append(i)
+
+            if action_availabilities is not None:
+                assert(action_availabilities[j][i])
         return outs
 
     def entropy(self, probs):
-        return - (probs * torch.log(probs)).mean()
+        return - (torch.clamp(probs, self.eps_denom) * torch.log(torch.clamp(probs, self.eps_denom))).mean()
+        #return - (probs * torch.log(probs)).mean()
 
     def train_policy_net(self, frame, frame_next_vals):
 
-
+        self.policy_net.train()
 
         for param_group in self.optimizer.param_groups:
             curr_lr = param_group['lr']
         print("Training network. lr: %f. clip: %f" % (curr_lr, self.clip_param))
 
-
-
+        #with detect_anomaly():
+        #with True:
 
         # Memory computes targets for value network, and advantag es for policy iteration
         self.memory.compute_vtargets_adv(self.discount_factor, self.lam, frame_next_vals)
@@ -166,17 +192,25 @@ class Agent():
 
 
                 mini_batch = self.memory.sample_mini_batch(frame)
-                mini_batch = np.array(mini_batch).transpose()
+                #mini_batch = np.array(mini_batch).transpose()
+                history, \
+                actions, \
+                rewards, \
+                dones, \
+                vtargs, \
+                rets, \
+                advs, \
+                hiddens = zip(*mini_batch)
 
-                history = np.stack(mini_batch[0], axis=0)
+                history = np.stack(history, axis=0)
                 states = np.float32(history[:, :HISTORY_SIZE, :, :]) / 255.
-                actions = np.array(list(mini_batch[1]))
-                rewards = np.array(list(mini_batch[2]))
+                actions = np.array(list(actions))
+                rewards = np.array(list(rewards))
                 next_states = np.float32(history[:, 1:, :, :]) / 255.
-                dones = mini_batch[3]
-                v_returns = mini_batch[5].astype(np.float32)
-                advantages = mini_batch[6].astype(np.float32)
-                hiddens = mini_batch[7]
+                dones = np.array(dones)
+                v_returns = np.array(rets)
+                advantages = np.array(advs)
+
                 if (self.mode == 'PPO_LSTM'):
                     hiddens = torch.from_numpy(np.stack(hiddens, axis=0)).to(device)
                     hiddens.requires_grad = True
@@ -187,11 +221,11 @@ class Agent():
                 ### Converts everything to tensor
                 states = torch.from_numpy(states).to(device)
                 actions = torch.from_numpy(actions).to(device)
-                rewards = torch.from_numpy(rewards).to(device)
+                rewards = torch.from_numpy(rewards).to(device).float()
                 next_states = torch.from_numpy(next_states).to(device)
                 dones = torch.from_numpy(np.uint8(dones)).to(device)
-                v_returns = torch.from_numpy(v_returns).to(device)
-                advantages = torch.from_numpy(advantages).to(device)
+                v_returns = torch.from_numpy(v_returns).to(device).float()
+                advantages = torch.from_numpy(advantages).to(device).float()
 
 
 
@@ -220,7 +254,7 @@ class Agent():
                     with torch.no_grad():
                         old_probs, old_vals = self.target_net(states)
 
-
+                curr_vals = curr_vals.flatten()
                 curr_prob_select = curr_probs.gather(1, actions).reshape((n,))
                 old_prob_select = old_probs.gather(1, actions).reshape((n,))
 
@@ -232,7 +266,7 @@ class Agent():
                 t1 = time.time()
 
                 ### Compute ratios
-                ratio = torch.exp(torch.log(curr_prob_select) - torch.log(torch.clamp(old_prob_select.detach(), self.eps_denom)))
+                ratio = torch.exp(torch.log(torch.clamp(curr_prob_select, self.eps_denom)) - torch.log(torch.clamp(old_prob_select.detach(), self.eps_denom)))
                 ratio_adv = ratio * advantages.detach()
                 bounded_adv = torch.clamp(ratio, 1 - self.clip_param, 1 + self.clip_param) * advantages.detach()
 
@@ -247,7 +281,7 @@ class Agent():
                 ### Compute value and loss
                 value_loss = self.loss(curr_vals, v_returns.detach())
 
-                ent = self.entropy(curr_prob_select)
+                ent = self.entropy(curr_probs)
 
                 total_loss = pol_avg + self.c1 * value_loss - self.c2 * ent
 
@@ -259,6 +293,19 @@ class Agent():
 
                 self.optimizer.zero_grad()
                 total_loss.backward()
+
+                max_grad = torch.Tensor([0])
+                min_grad = torch.Tensor([0])
+                for name, param in self.policy_net.named_parameters():
+                    if param.requires_grad and param.grad is not None:
+                        max_grad = torch.max(max_grad, torch.max(param.grad).cpu())
+                        min_grad = torch.min(min_grad, torch.min(param.grad).cpu())
+                        if torch.isnan(param.grad).any():
+                            print(name, torch.min(param.grad), torch.max(param.grad), torch.isnan(param.grad).any())
+                            raise NotImplementedError
+
+                print(max_grad.cpu().item(),
+                      min_grad.cpu().item())
 
                 #backward time end
                 backward_time += (time.time() - t1)
@@ -298,6 +345,8 @@ class Agent():
             """
 
         self.num_frames_trained += train_frame
+
+        self.policy_net.eval()
 
     def init_hidden(self):
         return self.policy_net.init_hidden()

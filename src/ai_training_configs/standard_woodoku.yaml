@@ -1,0 +1,15 @@
+env_name: "gym_woodoku/Woodoku-v0"
+gym_factory: gymnasium
+num_envs: 8
+model: "PPO_MHDPA_2D"
+resize_shape:
+  - 15
+  - 15
+evaluation_reward_length: 500
+training_frame_count: 20000000
+history_size: 8
+graph_update_interval: 50
+save_graph_folder: "./save_graph"
+save_model_folder: "./save_model"
+c1: 1.0
+c2: 1.0

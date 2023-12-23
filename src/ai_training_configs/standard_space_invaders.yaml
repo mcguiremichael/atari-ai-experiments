@@ -1,0 +1,13 @@
+env_name: "SpaceInvaders-v0"
+gym_factory: gym
+num_envs: 8
+model: "PPO_MHDPA"
+resize_shape:
+  - 160
+  - 160
+evaluation_reward_length: 500
+training_frame_count: 20000000
+history_size: 8
+graph_update_interval: 50
+save_graph_folder: "./save_graph"
+save_model_folder: "./save_model"

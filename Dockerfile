@@ -24,8 +24,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         tmux \
         wget \
         unrar \
-        unzip 
-        
+        unzip
+
 RUN apt-get update \
   && apt-get install -y -qq --no-install-recommends \
     libglvnd0 \
@@ -47,7 +47,13 @@ RUN pip3 install numpy \
                  scikit-image \
                  atari_py
 
-RUN wget http://www.atarimania.com/roms/Roms.rar &&  unrar e Roms.rar && unzip ROMS.zip && python3 -m atari_py.import_roms ROMS
+pip3 install "gym[accept-rom-license, atari]"
+
+#RUN wget http://www.atarimania.com/roms/Roms.rar
+#RUN unrar e Roms.rar ROMS -o+
+#RUN ls | grep -i rom
+#RUN unzip ROMS.zip
+#RUN python3 -m atari_py.import_roms ROMS
 
 ENV NVIDIA_VISIBLE_DEVICES all
 ENV NVIDIA_DRIVER_CAPABILITIES graphics,utility,compute
