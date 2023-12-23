@@ -126,6 +126,16 @@ class Agent():
                 assert(action_availabilities[j][i])
         return outs
 
+    def get_attention_maps(self, state):
+        if (len(state.shape)) == 3:
+            state = torch.from_numpy(state).to(device).unsqueeze(0)
+        else:
+            state = torch.from_numpy(state).to(device)
+
+        assert(self.mode == "PPO_MHDPA")
+        return self.policy_net.forward_attention(state)
+
+
     def entropy(self, probs):
         return - (torch.clamp(probs, self.eps_denom) * torch.log(torch.clamp(probs, self.eps_denom))).mean()
         #return - (probs * torch.log(probs)).mean()

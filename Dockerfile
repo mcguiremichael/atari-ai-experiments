@@ -23,6 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python-opengl \
         tmux \
         wget \
+        unar \
         unrar \
         unzip
 
@@ -39,13 +40,20 @@ RUN pip3 install --upgrade pip
 
 RUN pip3 install numpy \
                  gym \
+                 pyglet \
                  box2d-py \
                  matplotlib \
                  seaborn \
                  pandas \
                  notebook \
                  scikit-image \
-                 atari_py
+                 atari_py \
+                 opencv-python
+
+RUN wget http://www.atarimania.com/roms/Roms.rar
+RUN mkdir extracted_roms && mv Roms.rar extracted_roms && cd extracted_roms && unrar e -y Roms.rar
+RUN python3 -m atari_py.import_roms extracted_roms
+RUN pip install gym[atari,accept-rom-license]==0.21.0
 
 pip3 install "gym[accept-rom-license, atari]"
 
