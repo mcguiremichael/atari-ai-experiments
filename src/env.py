@@ -29,6 +29,7 @@ class GameEnv():
         self.info = None
 
         self.history = np.zeros([history_size+1,self.height,self.width], dtype=np.uint8)
+        self.action_history = np.zeros([history_size+1], dtype=np.int32)
         self.number_lives = find_max_lifes(self._env)
         self.memory = None
 
@@ -44,6 +45,7 @@ class GameEnv():
     def reset(self):
         self.history = np.zeros([self.history_size+1,self.height,self.width],
                                 dtype=np.uint8)
+        self.action_history = np.zeros([self.history_size+1], dtype=np.int32)
         return self._env.reset()[0]
 
     def render(self):

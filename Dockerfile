@@ -53,9 +53,12 @@ RUN pip3 install numpy \
 RUN wget http://www.atarimania.com/roms/Roms.rar
 RUN mkdir extracted_roms && mv Roms.rar extracted_roms && cd extracted_roms && unrar e -y Roms.rar
 RUN python3 -m atari_py.import_roms extracted_roms
-RUN pip install gym[atari,accept-rom-license]==0.21.0
+RUN pip3 install gym
+RUN pip3 install "gym[atari]"
+RUN pip3 install "gym[accept-rom-license]"
+RUN pip3 install gymnasium
 
-pip3 install "gym[accept-rom-license, atari]"
+#RUN pip3 install "gym[accept-rom-license, atari]"
 
 #RUN wget http://www.atarimania.com/roms/Roms.rar
 #RUN unrar e Roms.rar ROMS -o+
@@ -63,5 +66,9 @@ pip3 install "gym[accept-rom-license, atari]"
 #RUN unzip ROMS.zip
 #RUN python3 -m atari_py.import_roms ROMS
 
+ENV PYTHONPATH=$PYTHONPATH:/app:/app/gym-woodoku
+
 ENV NVIDIA_VISIBLE_DEVICES all
 ENV NVIDIA_DRIVER_CAPABILITIES graphics,utility,compute
+
+WORKDIR /app
