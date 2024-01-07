@@ -48,7 +48,9 @@ RUN pip3 install numpy \
                  notebook \
                  scikit-image \
                  atari_py \
-                 opencv-python
+                 opencv-python \
+                 torch==1.13.0 \
+                 torchvision==0.14.0
 
 RUN wget http://www.atarimania.com/roms/Roms.rar
 RUN mkdir extracted_roms && mv Roms.rar extracted_roms && cd extracted_roms && unrar e -y Roms.rar

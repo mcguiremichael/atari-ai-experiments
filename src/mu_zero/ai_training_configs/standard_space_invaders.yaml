@@ -2,7 +2,7 @@ env_name: "SpaceInvadersNoFrameskip-v4"
 gym_factory: gym
 num_envs: 8
 model_config:
-  dynamics_num_resnet_blocks: 8
+  dynamics_num_resnet_blocks: 4
 output_folder:
   trained_agents/SpaceInvadersNoFrameskip-v4
 resize_shape:

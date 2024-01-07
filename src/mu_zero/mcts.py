@@ -31,7 +31,7 @@ def run_mcts(repr_net : nn.Module,
         max_search_t (float): Maximum amount of time to run searching for
         search_depth (int): Maximum depth in search tree to traverse
         action_space (int): Number of actions
-        
+
     Returns:
         Tuple[ torch.Tensor, torch.Tensor ]: Raw network policy, derived policy after search
     """
@@ -51,7 +51,7 @@ def run_mcts(repr_net : nn.Module,
         (num_search_iters < max_search_iter) and \
         (time.time() - start_search_t) < max_search_t
     ):
-        
+
         unroll_mcts(policy_net,
                     dynamics_net,
                     search_depth,
@@ -63,8 +63,8 @@ def run_mcts(repr_net : nn.Module,
                     o_t,
                     p_t=p_t,
                     v_t=v_t)
-        
-    output_policy = np.zeros_like(p_t)
+
+    output_policy = np.zeros(p_t.shape)
 
     N = len(o_t)
     for i in range(N):
@@ -78,7 +78,7 @@ def run_mcts(repr_net : nn.Module,
         output_policy[i] = policy
 
     return output_policy, v_t, o_t
-        
+
 def unroll_mcts(policy_net,
                 dynamics_net,
                 search_depth,
@@ -92,7 +92,7 @@ def unroll_mcts(policy_net,
                 v_t,
                 c1=1.25,
                 c2=19652):
-    
+
     states, \
     next_states, \
     policies, \
@@ -123,9 +123,9 @@ def unroll_mcts(policy_net,
                               Q_sa,
                               R_sa,
                               O_sa)
-    
+
     return final_policy
-    
+
 def run_selection_and_expansion(policy_net,
                                 dynamics_net,
                                 search_depth,
@@ -139,7 +139,7 @@ def run_selection_and_expansion(policy_net,
                                 v_t,
                                 c1=1.25,
                                 c2=19652):
-    
+
     states = []
     next_states = []
     policies = []
@@ -165,7 +165,7 @@ def run_selection_and_expansion(policy_net,
 
         actions_per_env = torch.from_numpy(
             np.array(actions_per_env).astype(np.int32).reshape((-1, 1))
-        ).to(o_t.device)
+        ).to(o_t.device).long()
 
         o_t, r_t = dynamics_net(o_t, actions_per_env)
 
@@ -198,7 +198,7 @@ def run_backup(states,
                R_sa,
                O_sa,
                gamma=0.99):
-    
+
     N, T = rewards.shape
 
     Gk = np.zeros((N, T))
@@ -212,7 +212,7 @@ def run_backup(states,
 
     for i in range(N):
         for j in range(T):
-            
+
             curr_state = states[i,j]
             curr_action = actions[i,j]
             hashed_state = hash_state(curr_state)
@@ -229,13 +229,13 @@ def select_action_UCT(o_t,
                       action_space,
                       c1=1.25,
                       c2=19652):
-    
+
     computed_q_values = list(Q_sa.values())
     min_q, max_q = 0.0, 1.0
     if len(computed_q_values) > 0:
         min_q = min(computed_q_values)
         max_q = max(computed_q_values)
-    
+
     hashed_o_t = hash_state(o_t)
     actions = list(range(action_space))
     p_t = p_t.cpu().numpy().flatten()

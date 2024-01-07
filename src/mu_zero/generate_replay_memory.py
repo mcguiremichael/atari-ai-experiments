@@ -12,14 +12,19 @@ def generate_gameplay_data(agent,
                            envs,
                            history_size : int,
                            vis_env_idx : int):
-    
+
     num_envs = len(envs)
     vis_env = envs[vis_env_idx]
     number_lives = envs[0].life
 
     prev_actions = None
 
+    counter = 0
+
     while True:
+
+        print(counter)
+        counter += 1
 
         curr_states = np.stack([envs[i].history[history_size-1,:,:] for i in range(len(envs))])
         next_states = []
@@ -48,10 +53,10 @@ def generate_gameplay_data(agent,
                                          envs[0].height,
                                          envs[0].width)
             env.history[history_size,:,:] = frame_next_state
-            
+
             if prev_actions is not None:
                 env.action_history[history_size] = prev_actions[i]
-            
+
             terminal_state = env.done or check_live(env.life, env.info['lives'])
             env.life = env.info['lives']
             r = env.reward
@@ -79,4 +84,3 @@ def generate_gameplay_data(agent,
         prev_actions = actions
 
         yield replay_memory_snapshots
-
