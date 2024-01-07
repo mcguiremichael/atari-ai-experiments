@@ -67,6 +67,8 @@ def run_mcts(repr_net : nn.Module,
                     o_t,
                     p_t=p_t,
                     v_t=v_t)
+        
+        num_search_iters += 1
 
     output_policy = np.zeros(p_t.shape)
 
