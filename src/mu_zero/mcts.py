@@ -40,6 +40,8 @@ def run_mcts(repr_net : nn.Module,
     Q_sa = [{} for i in range(len(state))]
     R_sa = [{} for i in range(len(state))]
     O_sa = [{} for i in range(len(state))]
+    Q_maxes = [RunningMax() for i in range(len(state))]
+    Q_mins = [RunningMin() for i in range(len(state))]
 
     num_search_iters = 0
     start_search_t = time.time()
@@ -60,6 +62,8 @@ def run_mcts(repr_net : nn.Module,
                     Q_sa,
                     R_sa,
                     O_sa,
+                    Q_maxes,
+                    Q_mins,
                     o_t,
                     p_t=p_t,
                     v_t=v_t)
@@ -87,6 +91,8 @@ def unroll_mcts(policy_net,
                 Q_sa,
                 R_sa,
                 O_sa,
+                Q_maxes,
+                Q_mins,
                 o_t,
                 p_t,
                 v_t,
@@ -106,6 +112,8 @@ def unroll_mcts(policy_net,
                                          Q_sa,
                                          R_sa,
                                          O_sa,
+                                         Q_maxes,
+                                         Q_mins,
                                          o_t,
                                          p_t,
                                          v_t,
@@ -122,7 +130,9 @@ def unroll_mcts(policy_net,
                               N_sa,
                               Q_sa,
                               R_sa,
-                              O_sa)
+                              O_sa,
+                              Q_maxes,
+                              Q_mins)
 
     return final_policy
 
@@ -134,6 +144,8 @@ def run_selection_and_expansion(policy_net,
                                 Q_sa,
                                 R_sa,
                                 O_sa,
+                                Q_maxes,
+                                Q_mins,
                                 o_t,
                                 p_t,
                                 v_t,
@@ -157,6 +169,8 @@ def run_selection_and_expansion(policy_net,
                 p_t[j],
                 N_sa[j],
                 Q_sa[j],
+                Q_maxes[j],
+                Q_mins[j],
                 action_space,
                 c1=c1,
                 c2=c2
@@ -197,6 +211,8 @@ def run_backup(states,
                Q_sa,
                R_sa,
                O_sa,
+               Q_maxes,
+               Q_mins,
                gamma=0.99):
 
     N, T = rewards.shape
@@ -222,19 +238,26 @@ def run_backup(states,
             Q_sa[i][sa] = (N_sa[i][sa] * Q_sa[i][sa] + Gk[i,j]) / (N_sa[i][sa] + 1)
             N_sa[i][sa] += 1
 
+            Q_maxes[i].update(Q_sa[i][sa])
+            Q_mins[i].update(Q_sa[i][sa])
+
 def select_action_UCT(o_t,
                       p_t,
                       N_sa,
                       Q_sa,
+                      Q_max,
+                      Q_min,
                       action_space,
                       c1=1.25,
                       c2=19652):
 
-    computed_q_values = list(Q_sa.values())
+    #computed_q_values = list(Q_sa.values())
     min_q, max_q = 0.0, 1.0
-    if len(computed_q_values) > 0:
-        min_q = min(computed_q_values)
-        max_q = max(computed_q_values)
+    if len(Q_sa) > 0:
+        min_q = Q_min.min()
+        max_q = Q_max.max()
+    #    min_q = min(computed_q_values)
+    #    max_q = max(computed_q_values)
 
     hashed_o_t = hash_state(o_t)
     actions = list(range(action_space))
@@ -267,3 +290,25 @@ def hash_state(s):
         s = s.cpu().numpy()
 
     return s.tobytes()
+
+class RunningMax:
+
+    def __init__(self):
+        self.value = -np.inf
+
+    def update(self, val : float):
+        self.value = max(self.value, val)
+
+    def max(self) -> float:
+        return self.value
+    
+class RunningMin:
+
+    def __init__(self):
+        self.value = np.inf
+
+    def update(self, val : float):
+        self.value = min(self.value, val)
+
+    def min(self) -> float:
+        return self.value
