@@ -67,7 +67,7 @@ def run_mcts(repr_net : nn.Module,
                     o_t,
                     p_t=p_t,
                     v_t=v_t)
-        
+
         num_search_iters += 1
 
     output_policy = np.zeros(p_t.shape)
@@ -161,37 +161,39 @@ def run_selection_and_expansion(policy_net,
     rewards = []
     values = []
 
-    for i in range(search_depth):
+    with torch.no_grad():
 
-        states.append(o_t.cpu().numpy())
+        for i in range(search_depth):
 
-        actions_per_env = [
-            select_action_UCT(
-                env_o_t,
-                p_t[j],
-                N_sa[j],
-                Q_sa[j],
-                Q_maxes[j],
-                Q_mins[j],
-                action_space,
-                c1=c1,
-                c2=c2
-            ) for j, env_o_t in enumerate(o_t)
-        ]
+            states.append(o_t.cpu().numpy())
 
-        actions_per_env = torch.from_numpy(
-            np.array(actions_per_env).astype(np.int32).reshape((-1, 1))
-        ).to(o_t.device).long()
+            actions_per_env = [
+                select_action_UCT(
+                    env_o_t,
+                    p_t[j],
+                    N_sa[j],
+                    Q_sa[j],
+                    Q_maxes[j],
+                    Q_mins[j],
+                    action_space,
+                    c1=c1,
+                    c2=c2
+                ) for j, env_o_t in enumerate(o_t)
+            ]
 
-        o_t, r_t = dynamics_net(o_t, actions_per_env)
+            actions_per_env = torch.from_numpy(
+                np.array(actions_per_env).astype(np.int32).reshape((-1, 1))
+            ).to(o_t.device).long()
 
-        p_t, v_t = policy_net(o_t)
+            o_t, r_t = dynamics_net(o_t, actions_per_env)
 
-        policies.append(p_t.cpu().numpy())
-        next_states.append(o_t.cpu().numpy())
-        actions.append(actions_per_env.cpu().numpy().flatten())
-        rewards.append(r_t.cpu().numpy().flatten())
-        values.append(v_t.cpu().numpy().flatten())
+            p_t, v_t = policy_net(o_t)
+
+            policies.append(p_t.cpu().numpy())
+            next_states.append(o_t.cpu().numpy())
+            actions.append(actions_per_env.cpu().numpy().flatten())
+            rewards.append(r_t.cpu().numpy().flatten())
+            values.append(v_t.cpu().numpy().flatten())
 
     states = np.array(states).swapaxes(0,1)
     next_states = np.array(next_states).swapaxes(0,1)
@@ -263,7 +265,7 @@ def select_action_UCT(o_t,
 
     hashed_o_t = hash_state(o_t)
     actions = list(range(action_space))
-    p_t = p_t.cpu().numpy().flatten()
+    p_t = p_t.detach().cpu().numpy().flatten()
     q_t = np.zeros(len(p_t))
     n_t = np.zeros(len(p_t)).astype(np.int32)
 
@@ -276,11 +278,17 @@ def select_action_UCT(o_t,
         q_t[a] = Q_sa[(hashed_o_t, a)]
         n_t[a] = N_sa[(hashed_o_t, a)]
 
-    adjusted_q_t = (q_t - min_q) / (max_q - min_q)
+    adjusted_q_t = (q_t - min_q) / (max_q - min_q + 1e-8)
 
-    policy_weight = ((sum(n_t) ** 0.5) / (1 + n_t)) * (c1 + np.log((sum(n_t) + c2 + 1) / c2))
+    policy_weight = (((sum(n_t) + 1) ** 0.5) / (1 + n_t)) * (c1 + np.log((sum(n_t) + c2 + 1) / c2))
 
     UCT_vec = adjusted_q_t + (p_t * policy_weight)
+
+    unique_vec = np.unique(UCT_vec)
+    if len(unique_vec) == 1 and unique_vec[0] == 0:
+        print("Zero action")
+
+    print(adjusted_q_t, p_t * policy_weight, UCT_vec)
 
     action = np.argmax(UCT_vec)
 
@@ -289,7 +297,7 @@ def select_action_UCT(o_t,
 def hash_state(s):
 
     if type(s) == torch.Tensor:
-        s = s.cpu().numpy()
+        s = s.detach().cpu().numpy()
 
     return s.tobytes()
 
@@ -303,7 +311,7 @@ class RunningMax:
 
     def max(self) -> float:
         return self.value
-    
+
 class RunningMin:
 
     def __init__(self):

@@ -4,6 +4,7 @@ from mu_zero_models import AtariRepresentationNetwork, AtariDynamicsNet, AtariPo
 from mcts import run_mcts
 
 import torch
+import torch.optim as optim
 import torch.nn as nn
 import numpy as np
 
@@ -24,8 +25,10 @@ class MuZeroAgent:
                  search_depth : int,
                  num_envs : int,
                  per_env_memory_length : int,
+                 learning_rate : float = 1e-3,
                  c1 : float = 1.25,
                  c2 : float = 19652,
+                 gamma : float = 0.99,
                  wp : float = 1.0,
                  wv : float = 1.0,
                  wr : float = 1.0):
@@ -40,8 +43,10 @@ class MuZeroAgent:
         self.search_depth = search_depth
         self.num_envs = num_envs
         self.per_env_memory_length = per_env_memory_length
+        self.learning_rate = learning_rate
         self.c1 = c1
         self.c2 = c2
+        self.gamma = gamma
         self.wp = wp
         self.wv = wv
         self.wr = wr
@@ -59,6 +64,12 @@ class MuZeroAgent:
 
         self.checkpoint_counter = 0
 
+        self.optimizer = optim.Adam(params=list(self.representation_net.parameters()) + \
+                                            list(self.dynamics_net.parameters()) + \
+                                            list(self.policy_net.parameters()),
+                                    lr=learning_rate,
+                                    eps=1e-8)
+
     def build_networks(self):
 
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -70,7 +81,7 @@ class MuZeroAgent:
         self.dynamics_net = AtariDynamicsNet(self.frame_size,
                                              self.model_config["dynamics_num_resnet_blocks"],
                                              self.action_size).to(self.device)
-        
+
         self.policy_net = AtariPolicyNet(self.action_size).to(self.device)
 
     def get_action(self,
@@ -79,9 +90,9 @@ class MuZeroAgent:
                    action_availabilities=None,
                    hidden_state=None,
                    use_search : bool = True):
-        
+
         self.eval()
-        
+
         if (len(state.shape)) == 3:
             state = torch.from_numpy(state).to(self.device).unsqueeze(0)
         else:
@@ -113,6 +124,7 @@ class MuZeroAgent:
                       action_availabilities=None):
 
         probs = probs.copy()
+        print(probs)
         if action_availabilities is not None:
             for i, avail in enumerate(action_availabilities):
                 probs[i] = probs[i] * avail
@@ -151,11 +163,11 @@ class MuZeroAgent:
     def run_training_step(self, batches_per_train_step : int):
 
         self.train()
-        
+
         for batch_idx in range(batches_per_train_step):
 
             mini_batch = self.memory.sample_mini_batch(self.batch_size)
-            
+
             # (N, history_size + search_depth - 1, H, W)
             # (N, history_size + search_depth), note: actions are shifted by one in reverse relative to states, i.e. action i+1 was taken at state i
             # (N, search_depth - 1)
@@ -163,7 +175,12 @@ class MuZeroAgent:
             history, \
             actions, \
             rewards, \
-            dones = zip(*mini_batch)
+            dones = mini_batch
+
+            history = torch.from_numpy(history).to(self.device).float()
+            actions = torch.from_numpy(actions).to(self.device).long()
+            rewards = torch.from_numpy(rewards).to(self.device).float()
+            dones = torch.from_numpy(dones).to(self.device).bool()
 
             batch_size = len(history)
 
@@ -178,12 +195,12 @@ class MuZeroAgent:
 
             stacked_action_histories = stack_subsequences(actions[:,:-1],
                                                           self.history_size)
-            
+
             action_histories = stacked_action_histories.reshape((batch_size,
                                                                  self.search_depth,
                                                                  *stacked_action_histories.shape[1:]))
-            
-            actions = actions[:,self.history_size:-1]
+
+            actions = actions[:,self.history_size:]
 
             #encoded_states = self.representation_net(stacked_states,
             #                                         stacked_actions)
@@ -211,6 +228,8 @@ class MuZeroAgent:
                                                                       self.search_depth,
                                                                       *stacked_search_policy.shape[1:]))
 
+            sequential_search_policy = torch.from_numpy(sequential_search_policy).to(self.device).float()
+
             sequential_predicted_rewards = []
             sequential_predicted_policies = []
             sequential_predicted_values = []
@@ -219,7 +238,7 @@ class MuZeroAgent:
             # Inputs have shape (N, history_size * ...) and (N, history_size)
             encoded_states = self.representation_net(states[:,0],
                                                      action_histories[:,0])
-            
+
             curr_predicted_policy, curr_predicted_values = self.policy_net(encoded_states)
             sequential_predicted_policies.append(curr_predicted_policy)
             sequential_predicted_values.append(curr_predicted_values)
@@ -227,31 +246,29 @@ class MuZeroAgent:
             for i in range(self.search_depth):
                 encoded_states, curr_predicted_rewards = self.dynamics_net(encoded_states,
                                                                            actions[:,i])
-                
-                sequential_predicted_rewards.append(curr_predicted_rewards)
+
+                sequential_predicted_rewards.append(curr_predicted_rewards.flatten())
 
                 # Very important this value function estimation occurs AFTER dynamics_net applied...
                 # This generates the final V term in the value target generation equation
 
                 curr_predicted_policy, curr_predicted_values = self.policy_net(encoded_states)
                 sequential_predicted_values.append(curr_predicted_values)
-                
+
                 # Don't run on last iteration
                 if i < (self.search_depth - 1):
                     sequential_predicted_policies.append(curr_predicted_policy)
 
             sequential_predicted_rewards = torch.stack(sequential_predicted_rewards, dim=1)
             sequential_predicted_policies = torch.stack(sequential_predicted_policies, dim=1)
-            sequential_predicted_values = torch.cat(predicted_values, dim=1)
+            sequential_predicted_values = torch.cat(sequential_predicted_values, dim=1)
 
             # vtarg value bootstraps are from next states
             vtargs = self.compute_vtargs(rewards,
-                                         sequential_predicted_values[:,1:].detach())
+                                         sequential_predicted_values[:,-1].detach())
 
             # predicted_values we are trying to optimize from from curr_states, not next_states, thus we drop last ones
-            predicted_values = sequential_predicted_values[:,:-1].reshape((batch_size, 
-                                                                           self.search_depth, 
-                                                                           *sequential_predicted_values.shape[1:]))
+            predicted_values = sequential_predicted_values[:,:-1].reshape((batch_size, self.search_depth))
 
             loss_est, policy_loss, value_loss, reward_loss = self.loss(sequential_predicted_policies,
                                                                        sequential_predicted_rewards,
@@ -259,7 +276,7 @@ class MuZeroAgent:
                                                                        sequential_search_policy,
                                                                        rewards,
                                                                        vtargs)
-            
+
             self.optimizer.zero_grad()
             loss_est.backward()
             self.optimizer.step()
@@ -267,16 +284,16 @@ class MuZeroAgent:
     def compute_vtargs(self,
                        rewards : torch.Tensor,
                        last_predicted_values : torch.Tensor):
-        
-        vtargs = torch.zeros_like(rewards)
+
+        vtargs = torch.zeros_like(rewards).float()
 
         for i in range(self.search_depth):
             adjusted_i = (self.search_depth - i) - 1
 
-            gammas = np.array([self.gamma ** j for j in range(i+1)])
+            gammas = torch.Tensor([self.gamma ** j for j in range(i+1)]).to(rewards.device)
             v_gamma = self.gamma ** (i + 1)
             vtargs[:, adjusted_i] = torch.sum(rewards[:, adjusted_i:] * gammas, dim=1) + v_gamma * last_predicted_values
-        
+
         return vtargs
 
     def save_checkpoint(self, output_folder : str):
@@ -294,10 +311,10 @@ class MuZeroAgent:
         )
 
         torch.save(
-            self.value_net.state_dict(),
-            os.path.join(output_folder, f"value_{self.checkpoint_counter:04d}.pth")
+            self.dynamics_net.state_dict(),
+            os.path.join(output_folder, f"dynamics_{self.checkpoint_counter:04d}.pth")
         )
-        
+
         self.checkpoint_counter += 1
 
     def loss(self,
@@ -307,20 +324,20 @@ class MuZeroAgent:
              search_policy,
              observed_rewards,
              observed_values):
-        
+
         policy_loss = self.policy_loss_fn(predicted_policy,
                                           search_policy)
-        
+
         value_loss = self.value_loss_fn(predicted_values,
                                         observed_values)
-        
+
         reward_loss = self.reward_loss_fn(predicted_rewards,
                                           observed_rewards)
-        
+
         loss = self.wp * policy_loss + self.wv * value_loss + self.wr * reward_loss
 
         return loss, policy_loss.cpu().item(), value_loss.cpu().item(), reward_loss.cpu().item()
-    
+
     def train(self):
         self.policy_net.train()
         self.dynamics_net.train()
@@ -333,14 +350,13 @@ class MuZeroAgent:
 
 def stack_subsequences(x : torch.Tensor,
                        subsequence_length):
-    
+
     N = x.shape[0]
     DK = x.shape[1]
     K = DK - subsequence_length + 1
-    
-    subsequences = [x[:,i:i+subsequence_length] for i in range(K)]
-    
-    output_tensor = torch.stack(subsequences, dim=1).flatten(start_dim=0, end_dim=1)
-    
-    return output_tensor
 
+    subsequences = [x[:,i:i+subsequence_length] for i in range(K)]
+
+    output_tensor = torch.stack(subsequences, dim=1).flatten(start_dim=0, end_dim=1)
+
+    return output_tensor

@@ -12,7 +12,7 @@ class ReplayMemory(data.Dataset):
                  memory_length : int,
                  history_size : int,
                  search_depth : int):
-        
+
         self.memory = deque(maxlen=memory_length)
         self.history_size = history_size
         self.search_depth = search_depth
@@ -22,7 +22,7 @@ class ReplayMemory(data.Dataset):
              action,
              reward,
              terminal):
-        
+
         self.memory.append([state, action, reward, terminal])
 
     def __getitem__(self, index : int) -> Tuple[
@@ -64,7 +64,7 @@ class ReplayMemory(data.Dataset):
             history_actions.append(past_action)
 
         adjusted_index -= 1
-        if self.memory[adjusted_index][3] or adjusted_index < 0:
+        if adjusted_index < 0 or self.memory[adjusted_index][3]:
             history_actions.append(0)
         else:
             history_actions.append(self.memory[adjusted_index][1])
@@ -83,7 +83,7 @@ class ReplayMemory(data.Dataset):
 
             adjusted_index = index + i
 
-            assert(adjusted_index < len(self))
+            #assert(adjusted_index < len(self))
 
             future_state, future_action, future_reward, future_terminal = self.memory[adjusted_index]
 
@@ -101,37 +101,35 @@ class ReplayMemory(data.Dataset):
             if future_terminal:
                 terminal_encountered_in_future = True
 
-        states = np.stack(history_states + [curr_state] + future_state, axis=0)
+        states = np.stack(history_states + [curr_state] + future_states, axis=0)
         actions = np.array(history_actions + [curr_action] + future_actions)
         rewards = np.array([curr_reward] + future_rewards)
-        terminals = np.array([curr_terminal] + future_terminals).astype(np.bool)
+        terminals = np.array([curr_terminal] + future_terminals).astype(bool)
 
         return states, actions, rewards, terminals
 
     def __len__(self) -> int:
-        
+
         length = len(self.memory) - self.search_depth
-        
+
         if length < 0:
             return 0
-        
+
         return length
 
 class MultiEnvReplayMemory(data.Dataset):
-    
+
     def __init__(self,
                  num_envs : int,
                  per_env_memory_length : int,
                  history_size : int,
                  search_depth : int):
-        
+
         self.memory_per_env = [ReplayMemory(
             per_env_memory_length,
             history_size,
             search_depth
         ) for i in range(num_envs)]
-
-        self.combined_dataset = data.ConcatDataset(self.memory_per_env)
 
     def push(self,
              index : int,
@@ -139,7 +137,7 @@ class MultiEnvReplayMemory(data.Dataset):
              action,
              reward,
              terminal):
-        
+
         self.memory_per_env[index].push(
             state,
             action,
@@ -148,7 +146,7 @@ class MultiEnvReplayMemory(data.Dataset):
         )
 
     def sample_mini_batch(self, batch_size : int):
-        
+
         indices = np.random.randint(0, len(self), batch_size)
 
         states, actions, rewards, terminals = list(zip(*[
@@ -163,9 +161,13 @@ class MultiEnvReplayMemory(data.Dataset):
         return states, actions, rewards, terminals
 
     def __getitem__(self, index : int):
-        return self.combined_dataset[index]
-    
+
+        lengths = [len(x) for x in self.memory_per_env]
+        cumulative_lengths = np.cumsum(lengths)
+        env_idx = np.searchsorted(cumulative_lengths, index)
+        sub_index = index % lengths[0]
+
+        return self.memory_per_env[env_idx][sub_index]
+
     def __len__(self) -> int:
-        return len(self.combined_dataset)
-
-
+        return sum([len(x) for x in self.memory_per_env])

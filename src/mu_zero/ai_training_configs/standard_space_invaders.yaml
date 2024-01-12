@@ -1,26 +1,26 @@
-env_name: "SpaceInvadersNoFrameskip-v4"
+env_name: "SpaceInvadersDeterministic-v4"
 gym_factory: gym
 num_envs: 8
 model_config:
-  dynamics_num_resnet_blocks: 4
+  dynamics_num_resnet_blocks: 8
 output_folder:
-  trained_agents/SpaceInvadersNoFrameskip-v4
+  trained_agents/SpaceInvadersDeterministic-v4
 resize_shape:
   - 96
   - 96
 evaluation_reward_length: 500
 training_frame_count: 20000000
-frame_start_training: 256
-train_step_interval: 256
-batches_per_train_step: 8
-checkpoint_interval: 256
+frame_start_training: 512
+train_step_interval: 32
+batches_per_train_step: 1
+checkpoint_interval: 12800
 history_size: 32
 max_search_iter: 50
 max_search_t: 30
 search_depth: 5
 batch_size: 8
 graph_update_interval: 50
-replay_memory_length: 1048576
+replay_memory_length: 12800
 wp: 1.0
 wv: 0.1
 wr: 0.1

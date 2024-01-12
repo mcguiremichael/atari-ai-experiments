@@ -32,13 +32,13 @@ def train_agent(env_name : str,
                 wr=0.1,
                 c1=1.25,
                 c2=19652):
-    
+
     envs = init_envs(env_name,
                      gym_factory,
                      num_envs,
                      history_size,
                      resize_shape)
-    
+
     action_size = envs[0].action_space.n
 
     frame_size = resize_shape
@@ -60,7 +60,7 @@ def train_agent(env_name : str,
                         wp=wp,
                         wv=wv,
                         wr=wr)
-    
+
     run_training(agent,
                  envs,
                  output_folder,
@@ -125,7 +125,7 @@ def init_envs(env_name,
               num_envs,
               history_size : int,
               resize_shape : Tuple[int, int]):
-    
+
 
     vis_env_idx = 0
     envs = []
@@ -139,7 +139,7 @@ def init_envs(env_name,
                             gym_factory=gym_factory,
                             history_size=history_size,
                             resize_shape=resize_shape))
-        
+
     return envs
 
 def parse_args():
