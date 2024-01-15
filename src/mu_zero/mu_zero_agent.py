@@ -25,7 +25,7 @@ class MuZeroAgent:
                  search_depth : int,
                  num_envs : int,
                  per_env_memory_length : int,
-                 learning_rate : float = 1e-3,
+                 learning_rate : float = 1e-4,
                  c1 : float = 1.25,
                  c2 : float = 19652,
                  gamma : float = 0.99,
@@ -325,6 +325,7 @@ class MuZeroAgent:
              observed_rewards,
              observed_values):
 
+        """
         policy_loss = self.policy_loss_fn(predicted_policy,
                                           search_policy)
 
@@ -333,6 +334,12 @@ class MuZeroAgent:
 
         reward_loss = self.reward_loss_fn(predicted_rewards,
                                           observed_rewards)
+        """
+
+        #policy_loss = torch.mean(phi_fn(ob))
+        reward_loss = torch.mean(torch.sum(phi_fn(observed_rewards) * torch.log(predicted_rewards), axis=1))
+        value_loss = torch.mean(torch.sum(phi_fn(observed_values) * torch.log(predicted_values), axis=1))
+        policy_loss = torch.mean(torch.sum(search_policy * torch.log(predicted_policy), axis=1))
 
         loss = self.wp * policy_loss + self.wv * value_loss + self.wr * reward_loss
 
@@ -360,3 +367,7 @@ def stack_subsequences(x : torch.Tensor,
     output_tensor = torch.stack(subsequences, dim=1).flatten(start_dim=0, end_dim=1)
 
     return output_tensor
+
+def phi_fn(x, eps=1e-3):
+
+    return torch.sign(x) * (((torch.abs(x) + 1) ** 0.5) - 1) + eps * x

@@ -42,6 +42,7 @@ def run_mcts(repr_net : nn.Module,
     O_sa = [{} for i in range(len(state))]
     Q_maxes = [RunningMax() for i in range(len(state))]
     Q_mins = [RunningMin() for i in range(len(state))]
+    Q_means = [RunningMean() for i in range(len(state))]
 
     num_search_iters = 0
     start_search_t = time.time()
@@ -64,6 +65,7 @@ def run_mcts(repr_net : nn.Module,
                     O_sa,
                     Q_maxes,
                     Q_mins,
+                    Q_means,
                     o_t,
                     p_t=p_t,
                     v_t=v_t)
@@ -80,6 +82,7 @@ def run_mcts(repr_net : nn.Module,
 
         counts = np.array([N_sa[i][(curr_state_hashed, a)] for a in available_actions])
         policy = counts / np.sum(counts)
+        #print(counts, np.sum(counts))
 
         output_policy[i] = policy
 
@@ -95,6 +98,7 @@ def unroll_mcts(policy_net,
                 O_sa,
                 Q_maxes,
                 Q_mins,
+                Q_means,
                 o_t,
                 p_t,
                 v_t,
@@ -116,6 +120,7 @@ def unroll_mcts(policy_net,
                                          O_sa,
                                          Q_maxes,
                                          Q_mins,
+                                         Q_means,
                                          o_t,
                                          p_t,
                                          v_t,
@@ -134,7 +139,8 @@ def unroll_mcts(policy_net,
                               R_sa,
                               O_sa,
                               Q_maxes,
-                              Q_mins)
+                              Q_mins,
+                              Q_means)
 
     return final_policy
 
@@ -148,6 +154,7 @@ def run_selection_and_expansion(policy_net,
                                 O_sa,
                                 Q_maxes,
                                 Q_mins,
+                                Q_means,
                                 o_t,
                                 p_t,
                                 v_t,
@@ -175,6 +182,7 @@ def run_selection_and_expansion(policy_net,
                     Q_sa[j],
                     Q_maxes[j],
                     Q_mins[j],
+                    Q_means[j],
                     action_space,
                     c1=c1,
                     c2=c2
@@ -217,7 +225,10 @@ def run_backup(states,
                O_sa,
                Q_maxes,
                Q_mins,
+               Q_means,
                gamma=0.99):
+
+    #print([x.value for x in Q_maxes], [x.value for x in Q_mins])
 
     N, T = rewards.shape
 
@@ -239,11 +250,13 @@ def run_backup(states,
 
             sa = (hashed_state, curr_action)
 
+            print(Q_sa[i][sa], N_sa[i][sa], Gk[i,j])
             Q_sa[i][sa] = (N_sa[i][sa] * Q_sa[i][sa] + Gk[i,j]) / (N_sa[i][sa] + 1)
             N_sa[i][sa] += 1
 
             Q_maxes[i].update(Q_sa[i][sa])
             Q_mins[i].update(Q_sa[i][sa])
+            Q_means[i].update(Q_sa[i][sa])
 
 def select_action_UCT(o_t,
                       p_t,
@@ -251,17 +264,20 @@ def select_action_UCT(o_t,
                       Q_sa,
                       Q_max,
                       Q_min,
+                      Q_mean,
                       action_space,
                       c1=1.25,
                       c2=19652):
 
     #computed_q_values = list(Q_sa.values())
-    min_q, max_q = 0.0, 1.0
+    min_q, max_q, mean_q = 0.0, 1.0, 0.5
     if len(Q_sa) > 0:
         min_q = Q_min.min()
         max_q = Q_max.max()
+        mean_q = Q_mean.mean()
     #    min_q = min(computed_q_values)
     #    max_q = max(computed_q_values)
+        #print(min_q, min(Q_sa.values()), max_q, max(Q_sa.values()))
 
     hashed_o_t = hash_state(o_t)
     actions = list(range(action_space))
@@ -273,7 +289,13 @@ def select_action_UCT(o_t,
         if (hashed_o_t, a) not in N_sa:
             N_sa[(hashed_o_t, a)] = 0
         if (hashed_o_t, a) not in Q_sa:
-            Q_sa[(hashed_o_t, a)] = 0
+
+            #default_q_value = 0
+            default_q_value = (mean_q - min_q) / (max_q - min_q + 1e-8)
+            print(mean_q, min_q, max_q, default_q_value)
+            Q_sa[(hashed_o_t, a)] = default_q_value
+            Q_min.update(mean_q)
+            Q_max.update(mean_q)
 
         q_t[a] = Q_sa[(hashed_o_t, a)]
         n_t[a] = N_sa[(hashed_o_t, a)]
@@ -284,13 +306,16 @@ def select_action_UCT(o_t,
 
     UCT_vec = adjusted_q_t + (p_t * policy_weight)
 
+    #print(adjusted_q_t, p_t * policy_weight, UCT_vec, policy_weight, n_t)
+    print(p_t)
+
     unique_vec = np.unique(UCT_vec)
     if len(unique_vec) == 1 and unique_vec[0] == 0:
-        print("Zero action")
+        #print("Zero action")
+        action = np.random.randint(0, len(UCT_vec)-1)
+    else:
+        action = np.argmax(UCT_vec)
 
-    print(adjusted_q_t, p_t * policy_weight, UCT_vec)
-
-    action = np.argmax(UCT_vec)
 
     return action
 
@@ -321,4 +346,18 @@ class RunningMin:
         self.value = min(self.value, val)
 
     def min(self) -> float:
+        return self.value
+
+class RunningMean:
+
+    def __init__(self):
+        self.value = 0
+        self.n = 0
+
+    def update(self, val : float):
+
+        self.value = ((self.value * self.n) + val) / (self.n + 1)
+        self.n += 1
+
+    def mean(self) -> float:
         return self.value
